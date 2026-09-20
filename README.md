@@ -2,6 +2,12 @@
 
 A [Hermes Agent](https://github.com/NousResearch/hermes-agent) desktop plugin that puts an **Omarchy Linux news feed** in a wide column to the right of chat. Official posts, GitHub releases, and clearly labeled community links — one pane. This is not the complete Omarchy universe. Read [docs/OPPOSITION.md](docs/OPPOSITION.md) before treating it as a briefing.
 
+## Demo
+
+Omarchy News in Hermes Desktop (mikesai6) — wide right-of-chat feed with cards and in-pane article reader.
+
+https://github.com/smfworks/smf-omarchy-news/releases/download/demo/demo.mp4
+
 ## What it does
 
 - **Right pane** — Omarchy News, docked to the right of the workspace (`400px`)
