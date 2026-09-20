@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Omarchy News</title>
+    <link>https://omarchy.org/news</link>
+    <item>
+      <title>Introducing Omarchy Dragon</title>
+      <link>https://omarchy.org/news/2026/09/introducing-omarchy-dragon</link>
+      <guid isPermaLink="true">https://omarchy.org/news/2026/09/introducing-omarchy-dragon</guid>
+      <pubDate>Fri, 18 Sep 2026 06:00:00 GMT</pubDate>
+      <description><![CDATA[Meet the five people bringing Omarchy to Snapdragon laptops.]]></description>
+      <content:encoded><![CDATA[<p>Full RSS body for Dragon.</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>

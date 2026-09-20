@@ -1,0 +1,5 @@
+name: smf-omarchy-news
+version: "1.0"
+description: Hermes Desktop pane — official Omarchy Linux news, releases, and labeled community posts.
+author: SMF Works
+kind: standalone
