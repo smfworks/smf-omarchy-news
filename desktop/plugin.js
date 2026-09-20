@@ -263,23 +263,15 @@ function imageUrlsEquivalent(left, right) {
   return false
 }
 
-function htmlHasMatchingImg(html, imageUrl) {
-  if (!html || !imageUrl) return false
-  const re = /<img\b[^>]*?\bsrc\s*=\s*("([^"]*)"|'([^']*)')/gi
-  let m
-  while ((m = re.exec(String(html)))) {
-    const src = m[2] || m[3] || ''
-    if (imageUrlsEquivalent(src, imageUrl)) return true
-  }
-  return false
-}
-
-function bodyContainsHeroImage(item) {
-  if (!item || !item.image_url) return false
-  // Backend sets image_in_body after comparing image_url to <img src> in body_html.
-  if (item.image_in_body === true) return true
-  if (item.image_in_body === false) return false
-  return htmlHasMatchingImg(item.body_html, item.image_url)
+function stripDuplicateHeroImages(html, imageUrl) {
+  if (!html) return html
+  if (!imageUrl) return html
+  return String(html).replace(/<img\b[^>]*>/gi, (tag) => {
+    const m = /\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tag)
+    const src = (m && (m[2] || m[3])) || ''
+    if (src && imageUrlsEquivalent(src, imageUrl)) return ''
+    return tag
+  })
 }
 
 function NewsCard({ item, onOpen }) {
@@ -326,7 +318,11 @@ function NewsCard({ item, onOpen }) {
 }
 
 function ArticleBody({ item }) {
-  const htmlBody = item && item.body_html
+  const rawHtml = item && item.body_html
+  const htmlBody =
+    rawHtml && item && item.image_url
+      ? stripDuplicateHeroImages(rawHtml, item.image_url)
+      : rawHtml
   const text = item && item.body_text
   if (htmlBody) {
     return jsx('div', {
@@ -452,10 +448,10 @@ function ReaderView({ ctx, articleId, listingItem, onBack }) {
                       : null,
                   ],
                 }),
-                // One picture in the reader: skip the hero when body_html already
-                // has that same <img> (query/CDN path variants count). Unique
-                // body images stay. Feed cards still render image_url once.
-                item && item.image_url && !bodyContainsHeroImage(item)
+                // Always paint the hero from image_url when present. Body <img>
+                // tags often do not show in this pane (innerHTML / CSP). Matching
+                // duplicates are stripped from the displayed body instead.
+                item && item.image_url
                   ? jsx(HeroImage, { src: item.image_url, alt: item.title })
                   : null,
                 data && data.errors && data.errors.length

@@ -133,8 +133,11 @@ def test_parse_atom_reddit_labeled_community():
     assert items[0]["source_name"] == "Reddit r/omarchy"
     assert "QUATTRO" in items[0]["title"]
     assert items[0]["image_url"] and "preview.redd.it" in items[0]["image_url"]
-    # Same preview was lifted into image_url and left in content HTML.
+    # Same preview was lifted into image_url; the duplicate <img> is stripped
+    # from displayed body_html so the reader can show the hero once.
     assert items[0]["image_in_body"] is True
+    assert "preview.redd.it" not in (items[0]["body_html"] or "")
+    assert "<img" not in (items[0]["body_html"] or "").lower()
 
 
 def test_parse_hn_rss_labeled():
@@ -516,7 +519,8 @@ def test_matching_og_image_and_body_img_sets_image_in_body():
     assert item is not None
     assert item["image_url"] == "https://omarchy.org/brand/hero.png?w=1200"
     assert item["image_in_body"] is True
-    assert "hero.png" in (item["body_html"] or "")
+    # Duplicate of the hero is stripped from displayed HTML; the other photo stays.
+    assert "hero.png" not in (item["body_html"] or "")
     assert "other.png" in (item["body_html"] or "")
 
 
@@ -542,3 +546,62 @@ def test_hero_only_article_is_not_image_in_body():
     assert item["image_url"].endswith("banner.png")
     assert item["image_in_body"] is False
     assert "<img" not in (item["body_html"] or "")
+
+
+def test_strip_duplicate_hero_images_same_matching_rules_as_equivalence():
+    html = (
+        '<p>Lead</p>'
+        '<img src="https://omarchy.org/brand/hero.png?w=1200" alt="Hero">'
+        '<img src="https://www.omarchy.org/brand/hero.png" alt="www">'
+        '<img src="http://omarchy.org/brand/hero.png/" alt="http">'
+        '<img src="/brand/hero.png" alt="relative">'
+        '<img src="https://cdn.example/photo.jpg/640" alt="cdn size">'
+        '<img src="https://omarchy.org/brand/dragon.png" alt="Dragon">'
+        '<img src="https://omarchy.org/brand/other.png" alt="Other">'
+    )
+    stripped = api.strip_duplicate_hero_images(html, "https://omarchy.org/brand/hero.png")
+    assert stripped is not None
+    assert "hero.png" not in stripped
+    assert "dragon.png" in stripped
+    assert "other.png" in stripped
+    # Same-host CDN size suffix still counts as the hero.
+    cdn = api.strip_duplicate_hero_images(
+        '<img src="https://cdn.example/photo.jpg/640" alt="x">'
+        '<img src="https://cdn.example/other.jpg" alt="y">',
+        "https://cdn.example/photo.jpg",
+    )
+    assert "photo.jpg" not in (cdn or "")
+    assert "other.jpg" in (cdn or "")
+
+
+def test_strip_duplicate_hero_images_leaves_body_when_no_hero_url():
+    html = '<p>Caption</p><img src="https://omarchy.org/brand/dragon.png" alt="Dragon">'
+    assert api.strip_duplicate_hero_images(html, None) == html
+    assert api.strip_duplicate_hero_images(html, "") == html
+    assert api.strip_duplicate_hero_images(None, "https://omarchy.org/x.png") is None
+
+
+def test_strip_duplicate_hero_images_leaves_distinct_photos_when_hero_absent_from_body():
+    html = (
+        '<p>Caption</p>'
+        '<img src="https://omarchy.org/brand/dragon.png" alt="Dragon">'
+        '<img src="https://omarchy.org/brand/other.png" alt="Other">'
+    )
+    out = api.strip_duplicate_hero_images(
+        html, "https://omarchy.org/brand/social/hackerman.png"
+    )
+    assert "dragon.png" in (out or "")
+    assert "other.png" in (out or "")
+    assert out == html
+
+
+def test_strip_duplicate_hero_images_is_idempotent():
+    html = (
+        '<img src="https://omarchy.org/brand/hero.png" alt="Hero">'
+        '<img src="https://omarchy.org/brand/other.png" alt="Other">'
+    )
+    once = api.strip_duplicate_hero_images(html, "https://omarchy.org/brand/hero.png")
+    twice = api.strip_duplicate_hero_images(once, "https://omarchy.org/brand/hero.png")
+    assert once == twice
+    assert "hero.png" not in (once or "")
+    assert "other.png" in (once or "")
