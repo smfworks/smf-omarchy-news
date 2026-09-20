@@ -91,6 +91,8 @@ def test_parse_omarchy_article_html_keeps_prose_strips_script():
     assert "script" not in (item["body_html"] or "").lower()
     assert "alert" not in (item["body_html"] or "")
     assert "/brand/dragon.png" in (item["body_html"] or "") or "dragon.png" in (item["body_html"] or "")
+    # og:image is a different file from the body photo — not a duplicate.
+    assert item["image_in_body"] is False
 
 
 def test_parse_rss_official():
@@ -116,6 +118,8 @@ def test_parse_github_releases_skips_drafts():
     assert "bespoke kernel" in (items[0]["lede"] or "")
     assert items[0]["id"].startswith("release:")
     assert "webcam" in (items[0]["body_text"] or "")
+    assert items[0]["image_url"] is None
+    assert items[0]["image_in_body"] is False
 
 
 def test_parse_atom_reddit_labeled_community():
@@ -129,6 +133,8 @@ def test_parse_atom_reddit_labeled_community():
     assert items[0]["source_name"] == "Reddit r/omarchy"
     assert "QUATTRO" in items[0]["title"]
     assert items[0]["image_url"] and "preview.redd.it" in items[0]["image_url"]
+    # Same preview was lifted into image_url and left in content HTML.
+    assert items[0]["image_in_body"] is True
 
 
 def test_parse_hn_rss_labeled():
@@ -367,6 +373,7 @@ def test_get_article_fetches_official_body_from_listing(tmp_path: Path):
     assert result["ok"] is True
     assert "Five people" in (result["item"]["body_text"] or "")
     assert result["item"]["image_url"].endswith("hackerman.png")
+    assert result["item"]["image_in_body"] is False
 
 
 def test_get_article_does_not_fabricate_when_fetch_fails(tmp_path: Path):
@@ -439,3 +446,99 @@ def test_rss_fallback_when_html_empty(tmp_path: Path):
     titles = [i["title"] for i in payload["items"] if i["source_name"] == "Omarchy.org"]
     assert titles == ["Introducing Omarchy Dragon"]
     assert payload["items"][0]["id"] == "news:2026-09-introducing-omarchy-dragon"
+
+
+# ---------------------------------------------------------------------------
+# Reader hero vs body_html image dedupe
+# ---------------------------------------------------------------------------
+
+def test_image_urls_equivalent_ignores_query_and_relative_paths():
+    assert api.image_urls_equivalent(
+        "https://omarchy.org/brand/hero.png?w=1200",
+        "https://omarchy.org/brand/hero.png",
+    )
+    assert api.image_urls_equivalent(
+        "https://www.omarchy.org/brand/hero.png",
+        "http://omarchy.org/brand/hero.png/",
+    )
+    assert api.image_urls_equivalent(
+        "/brand/hero.png",
+        "https://omarchy.org/brand/hero.png",
+    )
+    assert api.image_urls_equivalent(
+        "https://cdn.example/photo.jpg",
+        "https://cdn.example/photo.jpg/640",
+    )
+    assert not api.image_urls_equivalent(
+        "https://omarchy.org/brand/social/hackerman.png",
+        "https://omarchy.org/brand/dragon.png",
+    )
+    assert not api.image_urls_equivalent(None, "https://omarchy.org/x.png")
+    assert not api.image_urls_equivalent("https://omarchy.org/a.png", "https://omarchy.org/b.png")
+
+
+def test_body_contains_image_does_not_flag_unique_body_photos():
+    html = (
+        '<p>Caption</p>'
+        '<img src="https://omarchy.org/brand/dragon.png" alt="Dragon">'
+        '<img src="https://omarchy.org/brand/other.png" alt="Other">'
+    )
+    assert api.body_contains_image(html, "https://omarchy.org/brand/dragon.png") is True
+    assert api.body_contains_image(html, "https://omarchy.org/brand/dragon.png?w=800") is True
+    assert api.body_contains_image(html, "https://omarchy.org/brand/social/hackerman.png") is False
+    assert api.body_contains_image(html, None) is False
+    assert api.body_contains_image(None, "https://omarchy.org/brand/dragon.png") is False
+    # No hero → nothing to strip; unique imgs would still render in the body.
+    assert api.body_contains_image(html, "") is False
+
+
+def test_matching_og_image_and_body_img_sets_image_in_body():
+    document = """<!DOCTYPE html>
+<html>
+<head>
+<meta property="og:image" content="https://omarchy.org/brand/hero.png?w=1200">
+</head>
+<body>
+<h1>Fixture with shared hero</h1>
+<div class="prose">
+<p>Enough body text for a full article so this is not just a listing lede placeholder sentence.</p>
+<img src="/brand/hero.png" alt="Hero">
+<img src="/brand/other.png" alt="Other">
+</div>
+</body>
+</html>
+"""
+    item = api.parse_omarchy_article_html(
+        document,
+        source_url="https://omarchy.org/news/2026/09/fixture-shared-hero/",
+        fetched_at="2026-09-20T00:00:00Z",
+    )
+    assert item is not None
+    assert item["image_url"] == "https://omarchy.org/brand/hero.png?w=1200"
+    assert item["image_in_body"] is True
+    assert "hero.png" in (item["body_html"] or "")
+    assert "other.png" in (item["body_html"] or "")
+
+
+def test_hero_only_article_is_not_image_in_body():
+    document = """<!DOCTYPE html>
+<html>
+<head>
+<meta property="og:image" content="https://omarchy.org/brand/social/banner.png">
+</head>
+<body>
+<h1>Hero only</h1>
+<div class="prose">
+<p>Enough body text for a full article so this is not just a listing lede placeholder sentence.</p>
+</div>
+</body>
+</html>
+"""
+    item = api.parse_omarchy_article_html(
+        document,
+        source_url="https://omarchy.org/news/2026/09/fixture-hero-only/",
+        fetched_at="2026-09-20T00:00:00Z",
+    )
+    assert item["image_url"].endswith("banner.png")
+    assert item["image_in_body"] is False
+    assert "<img" not in (item["body_html"] or "")

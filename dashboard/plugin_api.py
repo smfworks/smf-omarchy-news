@@ -36,7 +36,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
@@ -84,6 +84,10 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _SCRIPT_RE = re.compile(r"<script\b[^>]*>.*?</script>", re.I | re.S)
 _STYLE_RE = re.compile(r"<style\b[^>]*>.*?</style>", re.I | re.S)
+_IMG_SRC_RE = re.compile(
+    r"<img\b[^>]*?\bsrc\s*=\s*(?:\"([^\"]*)\"|'([^']*)')",
+    re.I | re.S,
+)
 
 _ATOM_NS = {
     "atom": "http://www.w3.org/2005/Atom",
@@ -210,6 +214,78 @@ def host_allowed(url: str) -> bool:
         return True
     # Language subdomains of omarchy.org (zh.omarchy.org, etc.)
     return host.endswith(".omarchy.org")
+
+
+def _image_url_parts(url: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Host + path for comparison. Drops query/fragment; never invents a URL."""
+    if not url:
+        return None
+    text = html.unescape(str(url)).strip()
+    if not text or text.startswith("data:") or text.startswith("javascript:"):
+        return None
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = unquote(parsed.path or "")
+    if len(path) > 1:
+        path = path.rstrip("/")
+    if not host and not path:
+        return None
+    return (host, path)
+
+
+def image_urls_equivalent(left: Optional[str], right: Optional[str]) -> bool:
+    """True when two image URLs are clearly the same asset.
+
+    Query strings and fragments are ignored (CDN cache-busters, ``width=``).
+    Relative vs absolute with the same path match. A same-host path that is
+    only a size suffix (``/photo.jpg`` vs ``/photo.jpg/640``) also matches.
+    Different filenames never match — we do not guess that a thumbnail is
+    the same photo.
+    """
+    if not left or not right:
+        return False
+    a_raw = html.unescape(str(left)).strip()
+    b_raw = html.unescape(str(right)).strip()
+    if a_raw == b_raw:
+        return True
+    a = _image_url_parts(a_raw)
+    b = _image_url_parts(b_raw)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    a_host, a_path = a
+    b_host, b_path = b
+    if not a_path or not b_path:
+        return False
+    if a_path == b_path and (not a_host or not b_host or a_host == b_host):
+        return True
+    if a_host and a_host == b_host:
+        shorter, longer = (a_path, b_path) if len(a_path) <= len(b_path) else (b_path, a_path)
+        if longer.startswith(shorter + "/"):
+            return True
+    return False
+
+
+def body_contains_image(body_html: Optional[str], image_url: Optional[str]) -> bool:
+    """Whether HTML already includes an ``<img>`` for the hero URL."""
+    if not body_html or not image_url:
+        return False
+    for match in _IMG_SRC_RE.finditer(str(body_html)):
+        src = match.group(1) or match.group(2) or ""
+        if image_urls_equivalent(src, image_url):
+            return True
+    return False
+
+
+def annotate_image_in_body(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Set ``image_in_body`` so the reader can skip a duplicate hero."""
+    if not item:
+        return item
+    item["image_in_body"] = body_contains_image(item.get("body_html"), item.get("image_url"))
+    return item
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +446,7 @@ def normalize_item(
     item_id = str(raw.get("id") or "").strip()
     if not item_id:
         item_id = slug_id("item", source_url or title)
-    return {
+    item = {
         "id": item_id,
         "title": title,
         "lede": lede,
@@ -382,6 +458,8 @@ def normalize_item(
         "published_at": published_at,
         "fetched_at": fetched,
     }
+    annotate_image_in_body(item)
+    return item
 
 
 def sort_items(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1198,6 +1276,18 @@ def article_has_body(item: Optional[Dict[str, Any]]) -> bool:
     return False
 
 
+def _article_result(
+    *,
+    ok: bool,
+    item: Optional[Dict[str, Any]],
+    **extra: Any,
+) -> Dict[str, Any]:
+    annotate_image_in_body(item)
+    payload: Dict[str, Any] = {"ok": ok, "plugin": PLUGIN, "item": item}
+    payload.update(extra)
+    return payload
+
+
 def get_article(
     item_id: str,
     *,
@@ -1212,7 +1302,7 @@ def get_article(
     disk = load_json(art_path)
     if disk and article_has_body(disk.get("item") if "item" in disk else disk):
         item = disk.get("item") if "item" in disk else disk
-        return {"ok": True, "plugin": PLUGIN, "item": item, "from_cache": True, "stale": False}
+        return _article_result(ok=True, item=item, from_cache=True, stale=False)
 
     item = find_cached_item(item_id, root)
     if item and article_has_body(item) and not _is_official_news(item):
@@ -1221,15 +1311,15 @@ def get_article(
             save_json(art_path, {"item": item, "fetched_at": fetched_at})
         except OSError:
             pass
-        return {"ok": True, "plugin": PLUGIN, "item": item, "from_cache": True, "stale": False}
+        return _article_result(ok=True, item=item, from_cache=True, stale=False)
 
     if item and _is_official_news(item) and item.get("source_url"):
         url = str(item["source_url"])
         if not host_allowed(url):
-            return {
-                "ok": False, "plugin": PLUGIN, "item": item,
-                "errors": [{"kind": "ssrf", "path": url, "error": "host not allowlisted"}],
-            }
+            return _article_result(
+                ok=False, item=item,
+                errors=[{"kind": "ssrf", "path": url, "error": "host not allowlisted"}],
+            )
         try:
             status, body, _ = getter(url, None)
             if status >= 400:
@@ -1249,36 +1339,37 @@ def get_article(
                 if parsed.get("published_at"):
                     merged["published_at"] = parsed["published_at"]
                 merged["fetched_at"] = fetched_at
+                annotate_image_in_body(merged)
                 try:
                     save_json(art_path, {"item": merged, "fetched_at": fetched_at})
                 except OSError:
                     pass
-                return {"ok": True, "plugin": PLUGIN, "item": merged, "from_cache": False, "stale": False}
+                return _article_result(ok=True, item=merged, from_cache=False, stale=False)
             # Parse failed — return listing item, do not fabricate prose.
-            return {
-                "ok": True, "plugin": PLUGIN, "item": item, "from_cache": True,
-                "stale": False, "partial": True,
-                "errors": [{"kind": "article_parse", "path": url, "error": "article HTML had no body"}],
-            }
+            return _article_result(
+                ok=True, item=item, from_cache=True,
+                stale=False, partial=True,
+                errors=[{"kind": "article_parse", "path": url, "error": "article HTML had no body"}],
+            )
         except Exception as exc:
             if item:
-                return {
-                    "ok": True, "plugin": PLUGIN, "item": item, "from_cache": True,
-                    "stale": True,
-                    "errors": [{"kind": "article_fetch", "path": url, "error": str(exc)}],
-                }
-            return {
-                "ok": False, "plugin": PLUGIN, "item": None,
-                "errors": [{"kind": "article_fetch", "path": url, "error": str(exc)}],
-            }
+                return _article_result(
+                    ok=True, item=item, from_cache=True,
+                    stale=True,
+                    errors=[{"kind": "article_fetch", "path": url, "error": str(exc)}],
+                )
+            return _article_result(
+                ok=False, item=None,
+                errors=[{"kind": "article_fetch", "path": url, "error": str(exc)}],
+            )
 
     if item:
-        return {"ok": True, "plugin": PLUGIN, "item": item, "from_cache": True, "stale": False}
+        return _article_result(ok=True, item=item, from_cache=True, stale=False)
 
-    return {
-        "ok": False, "plugin": PLUGIN, "item": None,
-        "errors": [{"kind": "not_found", "path": item_id, "error": "unknown article id"}],
-    }
+    return _article_result(
+        ok=False, item=None,
+        errors=[{"kind": "not_found", "path": item_id, "error": "unknown article id"}],
+    )
 
 
 def _is_official_news(item: Dict[str, Any]) -> bool:
