@@ -88,6 +88,7 @@ _IMG_SRC_RE = re.compile(
     r"<img\b[^>]*?\bsrc\s*=\s*(?:\"([^\"]*)\"|'([^']*)')",
     re.I | re.S,
 )
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*/?>", re.I | re.S)
 
 _ATOM_NS = {
     "atom": "http://www.w3.org/2005/Atom",
@@ -280,11 +281,64 @@ def body_contains_image(body_html: Optional[str], image_url: Optional[str]) -> b
     return False
 
 
+def strip_duplicate_hero_images(
+    body_html: Optional[str],
+    image_url: Optional[str],
+) -> Optional[str]:
+    """Drop ``<img>`` tags that are the same asset as ``image_url``.
+
+    The reader always paints the hero from ``image_url`` (Hermes innerHTML
+    often does not show body ``<img>``). Matching uses the same rules as
+    ``image_urls_equivalent``. Distinct body photos are left alone. No
+    ``image_url`` means the HTML is unchanged.
+    """
+    if body_html is None:
+        return None
+    raw = str(body_html)
+    if not raw.strip():
+        return None
+    if not image_url:
+        return raw
+
+    def _keep_or_drop(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        src_match = _IMG_SRC_RE.search(tag)
+        if not src_match:
+            return tag
+        src = src_match.group(1) or src_match.group(2) or ""
+        if image_urls_equivalent(src, image_url):
+            return ""
+        return tag
+
+    out = _IMG_TAG_RE.sub(_keep_or_drop, raw)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out or None
+
+
 def annotate_image_in_body(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Set ``image_in_body`` so the reader can skip a duplicate hero."""
+    """Record whether the unsanitized-for-display body already has the hero."""
     if not item:
         return item
     item["image_in_body"] = body_contains_image(item.get("body_html"), item.get("image_url"))
+    return item
+
+
+def prepare_display_body(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Flag hero/body overlap, then strip duplicate ``<img>`` tags for display.
+
+    ``image_in_body`` is measured before stripping so tests can still see that
+    the source HTML repeated the hero. The stored ``body_html`` is what the
+    reader renders — without the duplicate photo.
+    """
+    if not item:
+        return item
+    if "image_in_body" not in item:
+        annotate_image_in_body(item)
+    html_body = item.get("body_html")
+    image_url = item.get("image_url")
+    if html_body and image_url:
+        item["body_html"] = strip_duplicate_hero_images(html_body, image_url)
     return item
 
 
@@ -458,7 +512,7 @@ def normalize_item(
         "published_at": published_at,
         "fetched_at": fetched,
     }
-    annotate_image_in_body(item)
+    prepare_display_body(item)
     return item
 
 
@@ -1282,7 +1336,7 @@ def _article_result(
     item: Optional[Dict[str, Any]],
     **extra: Any,
 ) -> Dict[str, Any]:
-    annotate_image_in_body(item)
+    prepare_display_body(item)
     payload: Dict[str, Any] = {"ok": ok, "plugin": PLUGIN, "item": item}
     payload.update(extra)
     return payload
@@ -1338,8 +1392,9 @@ def get_article(
                     merged["image_url"] = parsed["image_url"]
                 if parsed.get("published_at"):
                     merged["published_at"] = parsed["published_at"]
+                if "image_in_body" in parsed:
+                    merged["image_in_body"] = parsed["image_in_body"]
                 merged["fetched_at"] = fetched_at
-                annotate_image_in_body(merged)
                 try:
                     save_json(art_path, {"item": merged, "fetched_at": fetched_at})
                 except OSError:
