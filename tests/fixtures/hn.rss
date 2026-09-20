@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Hacker News</title>
+    <item>
+      <title>Omarchy Quattro</title>
+      <link>https://news.ycombinator.com/item?id=999</link>
+      <comments>https://news.ycombinator.com/item?id=999</comments>
+      <pubDate>Mon, 01 Sep 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[Community thread about Omarchy.]]></description>
+    </item>
+  </channel>
+</rss>

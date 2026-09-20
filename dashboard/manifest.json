@@ -1,0 +1,12 @@
+{
+  "name": "smf-omarchy-news",
+  "label": "Omarchy News",
+  "description": "Official Omarchy Linux news, GitHub releases, and labeled community posts — one right-of-chat pane.",
+  "icon": "Newspaper",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/omarchy-news",
+    "position": "after:artifacts"
+  },
+  "api": "plugin_api.py"
+}

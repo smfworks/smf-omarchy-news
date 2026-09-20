@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <title>omarchy</title>
+  <entry>
+    <author><name>/u/example</name></author>
+    <title>OMARCHY QUATTRO RELEASED</title>
+    <link href="https://www.reddit.com/r/omarchy/comments/abc/omarchy_quattro_released/" />
+    <id>https://www.reddit.com/r/omarchy/comments/abc/omarchy_quattro_released/</id>
+    <published>2026-09-02T12:00:00+00:00</published>
+    <updated>2026-09-02T12:00:00+00:00</updated>
+    <content type="html">&lt;p&gt;Omarchy 4 aka Quattro is the biggest release since the project started.&lt;/p&gt;&lt;img src=&quot;https://preview.redd.it/example.png&quot; /&gt;</content>
+  </entry>
+</feed>
