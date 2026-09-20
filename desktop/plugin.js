@@ -220,6 +220,68 @@ function HeroImage({ src, alt }) {
   })
 }
 
+function imageUrlKey(url) {
+  if (!url) return null
+  const raw = String(url).replace(/&amp;/g, '&').trim()
+  if (!raw) return null
+  try {
+    const abs = raw.startsWith('//') ? 'https:' + raw : raw
+    if (abs.includes('://')) {
+      const u = new URL(abs)
+      const host = String(u.hostname || '')
+        .toLowerCase()
+        .replace(/^www\./, '')
+      let path = decodeURIComponent(u.pathname || '')
+      if (path.length > 1) path = path.replace(/\/+$/, '')
+      return host + '|' + path
+    }
+  } catch {
+    /* relative or invalid — compare as a path */
+  }
+  let path = raw.split('?')[0].split('#')[0]
+  if (path.length > 1) path = path.replace(/\/+$/, '')
+  return '|' + path
+}
+
+function imageUrlsEquivalent(left, right) {
+  if (!left || !right) return false
+  if (String(left) === String(right)) return true
+  const ka = imageUrlKey(left)
+  const kb = imageUrlKey(right)
+  if (!ka || !kb) return false
+  if (ka === kb) return true
+  const aHost = ka.slice(0, ka.indexOf('|'))
+  const aPath = ka.slice(ka.indexOf('|') + 1)
+  const bHost = kb.slice(0, kb.indexOf('|'))
+  const bPath = kb.slice(kb.indexOf('|') + 1)
+  if (aPath && aPath === bPath && (!aHost || !bHost || aHost === bHost)) return true
+  if (aHost && aHost === bHost && aPath && bPath) {
+    const shorter = aPath.length <= bPath.length ? aPath : bPath
+    const longer = aPath.length <= bPath.length ? bPath : aPath
+    if (longer.startsWith(shorter + '/')) return true
+  }
+  return false
+}
+
+function htmlHasMatchingImg(html, imageUrl) {
+  if (!html || !imageUrl) return false
+  const re = /<img\b[^>]*?\bsrc\s*=\s*("([^"]*)"|'([^']*)')/gi
+  let m
+  while ((m = re.exec(String(html)))) {
+    const src = m[2] || m[3] || ''
+    if (imageUrlsEquivalent(src, imageUrl)) return true
+  }
+  return false
+}
+
+function bodyContainsHeroImage(item) {
+  if (!item || !item.image_url) return false
+  // Backend sets image_in_body after comparing image_url to <img src> in body_html.
+  if (item.image_in_body === true) return true
+  if (item.image_in_body === false) return false
+  return htmlHasMatchingImg(item.body_html, item.image_url)
+}
+
 function NewsCard({ item, onOpen }) {
   return jsx('button', {
     type: 'button',
@@ -390,7 +452,12 @@ function ReaderView({ ctx, articleId, listingItem, onBack }) {
                       : null,
                   ],
                 }),
-                item && item.image_url ? jsx(HeroImage, { src: item.image_url, alt: item.title }) : null,
+                // One picture in the reader: skip the hero when body_html already
+                // has that same <img> (query/CDN path variants count). Unique
+                // body images stay. Feed cards still render image_url once.
+                item && item.image_url && !bodyContainsHeroImage(item)
+                  ? jsx(HeroImage, { src: item.image_url, alt: item.title })
+                  : null,
                 data && data.errors && data.errors.length
                   ? jsx('div', {
                       className:
